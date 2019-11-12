@@ -5,6 +5,7 @@ import sys
 import struct
 import operator
 from collections import OrderedDict
+import numbers
 
 
 # TODO: group the same words? (need markers) (or they can be displaced without noticing it)
@@ -61,22 +62,22 @@ class FormatStr:
             list: self._set_list,
             str: self._set_str,
             int: self._set_dword,
-            long: self._set_dword,
             Word: self._set_word,
             Byte: self._set_byte
         }
+        if bytes is not str:
+            self.parsers[bytes] = self._set_bytes
 
     def __setitem__(self, addr, value):
-        addr_type = type(addr)
-        if addr_type in (int, long):
+        if isinstance(addr, numbers.Integral):
             if self.isx64:
                 addr = addr % (1 << 64)
             else:
                 addr = addr % (1 << 32)
-        elif addr_type == str:
+        elif isinstance(addr_type, (str, bytes)):
             addr = unpack(addr, self.isx64)
         else:
-            raise TypeError("Address must be int or packed int, not: " + str(addr_type))
+            raise TypeError("Address must be int or packed int, not: " + str(type(addr)))
 
         val_type = type(value)
         if val_type == type(self):  # instance...
@@ -100,13 +101,18 @@ class FormatStr:
             self._set_byte(addr + i, ord(c))
         return addr + len(s)
 
+    def _set_bytes(self, addr, s):
+        for i, c in enumerate(s):
+            self._set_byte(addr + i, c)
+        return addr + len(s)
+
     def _set_dword(self, addr, value):
-        for i in xrange(4):
+        for i in range(4):
             self.mem[addr + i] = (int(value) >> (i * 8)) % (1 << 8)
         return addr + 4
 
     def _set_word(self, addr, value):
-        for i in xrange(2):
+        for i in range(2):
             self.mem[addr + i] = (int(value) >> (i * 8)) % (1 << 8)
         return addr + 2
 
@@ -193,9 +199,9 @@ class PayloadGenerator:
         return
 
     def check_nullbyte(self, addr):
-        if "\x00" in pack(addr, self.is64):
+        if b"\x00" in pack(addr, self.is64):
             # check if preceding address can be used
-            if (addr - 1) not in self.mem or "\x00" in pack(addr - 1, self.is64):
+            if (addr - 1) not in self.mem or b"\x00" in pack(addr - 1, self.is64):
                 # to avoid null bytes in the last byte of address, set previous byte
                 warning("Can't avoid null byte at address " + hex(addr))
             else:
@@ -215,8 +221,8 @@ class PayloadGenerator:
         prev_len = -1
         index = arg_index * 10000  # enough for sure
         while True:
-            payload = ""
-            addrs = ""
+            payload = b""
+            addrs = b""
             printed = start_len
             for addr, size, value in self.tuples:
                 print_len = value - printed
@@ -228,24 +234,24 @@ class PayloadGenerator:
                     elif size == 4:
                         print_len &= 0xffffffff
                 if print_len > 2:
-                    payload += "%" + str(print_len) + "c"
+                    payload += b"%" + str(print_len).encode() + b"c"
                 elif print_len >= 0:
-                    payload += "A" * print_len
+                    payload += b"A" * print_len
                 else:
                     warning("Can't write a value %08x (too small) %08x." % (value, print_len))
                     continue
 
                 modi = {
-                    1: "hh",
-                    2: "h",
-                    4: ""
+                    1: b"hh",
+                    2: b"h",
+                    4: b""
                 }[size]
-                payload += "%" + str(index) + "$" + modi + "n"
+                payload += b"%" + str(index).encode() + b"$" + modi + b"n"
                 addrs += pack(addr, self.is64)
                 printed += print_len
                 index += 1
 
-            payload += "A" * ((padding - len(payload)) % align)
+            payload += b"A" * ((padding - len(payload)) % align)
             if len(payload) == prev_len:
                 payload += addrs  # argnumbers are set right
                 break
@@ -254,9 +260,9 @@ class PayloadGenerator:
 
             index = arg_index + len(payload) // align
 
-        if "\x00" in payload:
+        if b"\x00" in payload:
             warning("Payload contains NULL bytes.")
-        return payload.ljust(self.buffer_size, "\x90")
+        return payload.ljust(self.buffer_size, b"\x90")
 
 
 class Word:
@@ -276,12 +282,12 @@ class Byte:
 
 
 def warning(s):
-    print >> sys.stderr, "WARNING:", s
+    print("WARNING:", s, file=sys.stderr)
 
 
 def tuples_sorted_by_values(adict):
     """Return list of (key, value) pairs of @adict sorted by values."""
-    return sorted(adict.items(), lambda x, y: cmp(x[1], y[1]))
+    return sorted(list(adict.items()), lambda x, y: cmp(x[1], y[1]))
 
 
 def tuples_sorted_by_keys(adict):
